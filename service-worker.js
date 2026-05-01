@@ -88,7 +88,11 @@ async function staleWhileRevalidate(request) {
   const cached = await cache.match(request);
   const networkPromise = fetch(request)
     .then((response) => {
-      if (response && response.ok) {
+      // `<img>` tags issue no-cors requests by default, so the response is
+      // opaque (status 0, ok false). We still want to cache those — opaque
+      // responses replay fine into a future <img>. Without this, the image
+      // cache would never fill from natural page browsing.
+      if (response && (response.ok || response.type === 'opaque')) {
         cache.put(request, response.clone()).catch(() => {});
       }
       return response;
