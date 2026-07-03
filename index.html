@@ -2560,7 +2560,12 @@ function renderIntroShell() {
   `;
   document.body.appendChild(wrap);
 
-  $('introSkipBtn').addEventListener('click', () => closeIntro({ goHome: true }));
+  $('introSkipBtn').addEventListener('click', () => {
+    // Parity with the native app: skipping the intro hides it on future
+    // launches (re-viewable any time from the menu).
+    lsSet('intro:hideOnLaunch', 'true');
+    closeIntro({ goHome: true });
+  });
   document.addEventListener('keydown', _introKeydown);
   _introWireSwipe();
 
@@ -2696,8 +2701,10 @@ function introAdvance() {
   const { articleIds, index } = _introState;
   const isLast = index === articleIds.length - 1;
   if (isLast) {
+    // Reconcile both directions (parity with the native app): ticking hides
+    // future auto-launches, unticking a previously saved choice re-enables.
     const chk = $('introHideChk');
-    if (chk?.checked) lsSet('intro:hideOnLaunch', 'true');
+    if (chk) lsSet('intro:hideOnLaunch', chk.checked ? 'true' : 'false');
     closeIntro({ goHome: true });
     return;
   }
