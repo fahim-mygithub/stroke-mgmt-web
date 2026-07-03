@@ -497,6 +497,59 @@ button { font-family: inherit; cursor: pointer; }
   display: flex; justify-content: flex-end; gap: 10px;
 }
 
+/* ---- External-link confirmation (parity with the native ExternalLinkModal) ----
+   Sits above every surface that can contain an https link: content modals
+   (z 40), the search overlay (z 45), and the intro slideshow (z 35). */
+.link-confirm-backdrop { z-index: 48; }
+.link-confirm-url {
+  margin: 10px 0 0 0; padding: 10px 12px;
+  background: var(--surface-2); border: 1px solid var(--border-2);
+  border-radius: var(--r-md);
+  font-size: 13px; color: var(--ink-2); word-break: break-all;
+}
+
+/* ---- Search overlay (command palette) ---- */
+.search-backdrop {
+  position: fixed; inset: 0; z-index: 45;
+  background: rgba(11, 18, 32, .48);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 12vh 16px 16px;
+  animation: backdropIn 200ms var(--ease) both;
+}
+.search-panel {
+  background: var(--surface); border-radius: var(--r-lg);
+  width: 100%; max-width: 560px; max-height: min(480px, 76vh);
+  display: flex; flex-direction: column; overflow: hidden;
+  box-shadow: var(--shadow-lg);
+  animation: modalIn 240ms var(--ease) both;
+}
+.search-input-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px; border-bottom: 1px solid var(--border-2);
+  color: var(--ink-3); flex-shrink: 0;
+}
+#searchInput {
+  flex: 1; min-width: 0; border: 0; outline: none; background: transparent;
+  font: inherit; font-size: 15px; color: var(--ink); padding: 4px 0;
+}
+#searchInput::placeholder { color: var(--ink-3); }
+.search-results { overflow-y: auto; padding: 6px; flex: 1; min-height: 0; }
+.search-result {
+  appearance: none; border: 0; background: transparent; width: 100%;
+  display: flex; flex-direction: column; gap: 2px;
+  text-align: left; padding: 10px 12px; border-radius: var(--r-md);
+  font: inherit; color: var(--ink); cursor: pointer;
+  transition: background 120ms var(--ease);
+}
+.search-result:hover, .search-result.active { background: var(--brand-softer); }
+.search-result .sr-tag { font-size: 11px; font-weight: 600; color: var(--brand); text-transform: uppercase; letter-spacing: 0.06em; }
+.search-result .sr-title { font-size: 14.5px; font-weight: 600; line-height: 1.35; letter-spacing: -0.005em; }
+.search-result .sr-snippet {
+  font-size: 12.5px; color: var(--ink-2); line-height: 1.45;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.search-hint { padding: 18px 16px; font-size: 13.5px; color: var(--ink-3); text-align: center; }
+
 /* ---- Intro slideshow ---- */
 .intro-backdrop {
   position: fixed; inset: 0; z-index: 35;
@@ -599,7 +652,7 @@ button { font-family: inherit; cursor: pointer; }
 }
 @media (prefers-reduced-motion: reduce) {
   .intro-track { transition: none; }
-  .modal-card, .intro-backdrop, .modal-backdrop { animation: none; }
+  .modal-card, .intro-backdrop, .modal-backdrop, .search-backdrop, .search-panel { animation: none; }
 }
 
 /* ---- Toast ---- */
@@ -629,7 +682,7 @@ button { font-family: inherit; cursor: pointer; }
 
   html, body { background: #fff !important; color: var(--ink) !important; }
   .topbar, #breadcrumbSlot, #topbarMenu, #toast,
-  .intro-backdrop, .modal-backdrop,
+  .intro-backdrop, .modal-backdrop, .search-backdrop,
   .summary-hero .actions, #backBtn { display: none !important; }
   .view { animation: none !important; }
   main.shell { max-width: none !important; padding: 0 !important; margin: 0 !important; }
@@ -669,7 +722,7 @@ button { font-family: inherit; cursor: pointer; }
     </div>
     <div class="topbar-title" id="topbarTitle"></div>
     <div class="spacer"></div>
-    <button class="icon-btn" aria-label="Search">
+    <button class="icon-btn" id="searchBtn" aria-label="Search" aria-haspopup="dialog">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="M21 21l-4.35-4.35" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
     </button>
     <button class="icon-btn" id="menuBtn" aria-label="Menu" aria-haspopup="menu" aria-expanded="false">
@@ -1927,9 +1980,70 @@ document.addEventListener('click', (e) => {
   }
   if (/^https?:/i.test(href)) {
     e.preventDefault();
-    window.open(href, '_blank', 'noopener,noreferrer');
+    openExternalLinkConfirm(href);
   }
 });
+
+/* ---- External-link confirmation --------------------------------------
+   Parity with the native app's ExternalLinkModal: every http(s) link in
+   CMS content warns before leaving the app. Opening still uses a new tab
+   with noopener,noreferrer so the SPA keeps its state either way. */
+let _linkConfirmLastFocus = null;
+
+function openExternalLinkConfirm(href) {
+  closeExternalLinkConfirm(); // single instance
+  _linkConfirmLastFocus = document.activeElement;
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-backdrop link-confirm-backdrop';
+  wrap.id = 'linkConfirmModal';
+  wrap.setAttribute('role', 'alertdialog');
+  wrap.setAttribute('aria-modal', 'true');
+  wrap.setAttribute('aria-labelledby', 'linkConfirmTitle');
+  wrap.innerHTML = `
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2 id="linkConfirmTitle">Leaving the app</h2>
+      </div>
+      <div class="modal-body">
+        <p style="margin:0;">This link opens a website in a new tab:</p>
+        <p class="link-confirm-url">${esc(href)}</p>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="linkConfirmCancelBtn">Cancel</button>
+        <button class="btn btn-primary" id="linkConfirmOpenBtn">Open link</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(wrap);
+  $('linkConfirmCancelBtn').addEventListener('click', closeExternalLinkConfirm);
+  $('linkConfirmOpenBtn').addEventListener('click', () => {
+    window.open(href, '_blank', 'noopener,noreferrer');
+    closeExternalLinkConfirm();
+  });
+  wrap.addEventListener('click', (e) => {
+    if (e.target === wrap) closeExternalLinkConfirm();
+  });
+  document.addEventListener('keydown', _linkConfirmKeydown);
+  setTimeout(() => $('linkConfirmOpenBtn')?.focus(), 0);
+}
+
+function _linkConfirmKeydown(e) {
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    closeExternalLinkConfirm();
+  }
+}
+
+function closeExternalLinkConfirm() {
+  const m = $('linkConfirmModal');
+  if (!m) return;
+  m.remove();
+  document.removeEventListener('keydown', _linkConfirmKeydown);
+  if (_linkConfirmLastFocus && document.body.contains(_linkConfirmLastFocus)) {
+    _linkConfirmLastFocus.focus();
+  }
+  _linkConfirmLastFocus = null;
+}
 
 /* ---------- Scroll helper ---------- */
 function smoothScrollTo(targetY, duration) {
@@ -2125,7 +2239,9 @@ function renderDisclaimerModal(bodyHtml, opts = {}) {
 }
 
 function _disclaimerEscClose(e) {
-  if (e.key === 'Escape') closeDisclaimerModal();
+  // The link-confirm dialog can sit above the review-mode disclaimer
+  // (its body may contain links); one Escape must close only the top layer.
+  if (e.key === 'Escape' && !$('linkConfirmModal')) closeDisclaimerModal();
 }
 
 function closeDisclaimerModal() {
@@ -2137,6 +2253,208 @@ function closeDisclaimerModal() {
     _disclaimerLastFocus.focus();
   }
   _disclaimerLastFocus = null;
+}
+
+/* ================================================================
+   Search overlay — command palette over the Reference Library
+   ================================================================
+   Pure overlay: never touches state.view, the trail, or scroll
+   positions, so it's safe to open from any view. Result clicks go
+   through goToArticle(), which handles back-stack context itself. */
+
+let _searchResults = [];
+let _searchActiveIdx = -1;
+// Deep-view opens fetch the library on demand; results must not claim
+// "no match" while that load is pending or after it failed.
+let _searchLibState = 'ready'; // 'ready' | 'loading' | 'error'
+let _searchLibError = '';
+
+function openSearch() {
+  if ($('searchOverlay')) return;
+  // Same layering rules as the article: link handler: the first-run
+  // disclaimer (no close affordance) blocks browsing entirely; the
+  // review-mode disclaimer and the intro slideshow are closed so the
+  // overlay never stacks on top of another modal surface.
+  if ($('disclaimerModal')) {
+    if (!$('disclaimerCloseFootBtn')) return;
+    closeDisclaimerModal();
+  }
+  if (_introState) closeIntro();
+  closeMenu();
+  _searchResults = [];
+  _searchActiveIdx = -1;
+  _searchLibState = state.articles.length ? 'ready' : 'loading';
+  _searchLibError = '';
+  const wrap = document.createElement('div');
+  wrap.className = 'search-backdrop';
+  wrap.id = 'searchOverlay';
+  wrap.setAttribute('role', 'dialog');
+  wrap.setAttribute('aria-modal', 'true');
+  wrap.setAttribute('aria-label', 'Search the library');
+  wrap.innerHTML = `
+    <div class="search-panel">
+      <div class="search-input-row">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="M21 21l-4.35-4.35" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <input id="searchInput" type="text" placeholder="Search the library…" autocomplete="off" spellcheck="false"
+               role="combobox" aria-expanded="true" aria-controls="searchResults" aria-autocomplete="list">
+        <button class="modal-close" id="searchCloseBtn" aria-label="Close search">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <div class="search-results" id="searchResults" role="listbox" aria-label="Search results"></div>
+    </div>
+  `;
+  document.body.appendChild(wrap);
+
+  const input = $('searchInput');
+  input.addEventListener('input', () => renderSearchResults(input.value));
+  $('searchCloseBtn').addEventListener('click', closeSearch);
+  wrap.addEventListener('click', (e) => {
+    if (e.target === wrap) closeSearch();
+  });
+  document.addEventListener('keydown', _searchKeydown);
+  setTimeout(() => input.focus(), 0);
+
+  if (!state.articles.length) {
+    // Deep-view open (user landed on an article/algorithm URL) — the
+    // library hasn't been fetched yet.
+    loadAllArticles()
+      .then((arts) => {
+        state.articles = arts;
+        _searchLibState = 'ready';
+      })
+      .catch((e) => {
+        _searchLibState = 'error';
+        _searchLibError = e.message;
+      })
+      .then(() => {
+        const inp = $('searchInput');
+        if (inp) renderSearchResults(inp.value);
+      });
+  }
+  renderSearchResults('');
+}
+
+function closeSearch() {
+  const overlay = $('searchOverlay');
+  if (!overlay) return;
+  overlay.remove();
+  document.removeEventListener('keydown', _searchKeydown);
+  _searchResults = [];
+  _searchActiveIdx = -1;
+  const btn = $('searchBtn');
+  if (btn) btn.focus();
+}
+
+/* Title hits outrank summary/tag hits; prefix title hits rank highest.
+   sort() is stable, so equal scores keep library order. */
+function searchArticles(query) {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  const scored = [];
+  for (const a of state.articles) {
+    const att = a.attributes;
+    const title = decodeEntities(att.Title || '').toLowerCase();
+    const summary = decodeEntities(att.Summary || '').toLowerCase();
+    const tags = (att.tags?.data || []).map((t) => (t.attributes?.Name || '').toLowerCase());
+    let score = 0;
+    if (title.includes(q)) score = title.startsWith(q) ? 3 : 2;
+    else if (summary.includes(q) || tags.some((t) => t.includes(q))) score = 1;
+    if (score) scored.push({ a, score });
+  }
+  scored.sort((x, y) => y.score - x.score);
+  return scored.slice(0, 12).map((s) => s.a);
+}
+
+function renderSearchResults(query) {
+  const list = $('searchResults');
+  if (!list) return;
+  _searchActiveIdx = -1;
+  // Library availability outranks the query: never show "no match"
+  // (or stale results) while the on-demand load is pending or failed.
+  if (_searchLibState === 'loading') {
+    _searchResults = [];
+    list.innerHTML = `<div class="search-hint">Loading library…</div>`;
+    return;
+  }
+  if (_searchLibState === 'error') {
+    _searchResults = [];
+    list.innerHTML = `<div class="search-hint">Couldn't load the library: ${esc(_searchLibError)}</div>`;
+    return;
+  }
+  if (!query.trim()) {
+    _searchResults = [];
+    list.innerHTML = `<div class="search-hint">Type to search titles, summaries, and tags.</div>`;
+    return;
+  }
+  _searchResults = searchArticles(query);
+  if (!_searchResults.length) {
+    list.innerHTML = `<div class="search-hint">No articles match.</div>`;
+    return;
+  }
+  list.innerHTML = _searchResults.map((a, i) => {
+    const att = a.attributes;
+    const firstTag = (att.tags?.data || [])[0]?.attributes?.Name || 'Article';
+    const snippet = decodeEntities(att.Summary || '').slice(0, 140);
+    return `
+      <button class="search-result" role="option" id="searchOpt${i}" aria-selected="false" data-article-id="${a.id}">
+        <span class="sr-tag">${esc(firstTag)}</span>
+        <span class="sr-title">${esc(decodeEntities(att.Title))}</span>
+        ${snippet ? `<span class="sr-snippet">${esc(snippet)}</span>` : ''}
+      </button>`;
+  }).join('');
+  list.querySelectorAll('.search-result').forEach((btn) => {
+    btn.addEventListener('click', () => _searchPick(+btn.dataset.articleId));
+  });
+}
+
+function _searchPick(id) {
+  closeSearch();
+  goToArticle(id);
+}
+
+function _searchKeydown(e) {
+  if (!$('searchOverlay')) return;
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    closeSearch();
+    return;
+  }
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    if (!_searchResults.length) return;
+    e.preventDefault();
+    const n = _searchResults.length;
+    _searchActiveIdx = e.key === 'ArrowDown'
+      ? (_searchActiveIdx + 1) % n
+      : (_searchActiveIdx <= 0 ? n - 1 : _searchActiveIdx - 1);
+    _searchUpdateActive();
+    return;
+  }
+  if (e.key === 'Enter') {
+    const pick = _searchActiveIdx >= 0
+      ? _searchResults[_searchActiveIdx]
+      : (_searchResults.length === 1 ? _searchResults[0] : null);
+    if (pick) {
+      e.preventDefault();
+      _searchPick(pick.id);
+    }
+  }
+}
+
+function _searchUpdateActive() {
+  const list = $('searchResults');
+  if (!list) return;
+  list.querySelectorAll('.search-result').forEach((btn, i) => {
+    const active = i === _searchActiveIdx;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-selected', active ? 'true' : 'false');
+    if (active) btn.scrollIntoView({ block: 'nearest' });
+  });
+  const input = $('searchInput');
+  if (input) {
+    if (_searchActiveIdx >= 0) input.setAttribute('aria-activedescendant', `searchOpt${_searchActiveIdx}`);
+    else input.removeAttribute('aria-activedescendant');
+  }
 }
 
 /* ================================================================
@@ -2409,6 +2727,9 @@ function introBack() {
 
 function _introKeydown(e) {
   if (!_introState) return;
+  // A higher overlay owns the keyboard: don't advance slides while the
+  // search palette or the external-link confirmation is on top.
+  if ($('searchOverlay') || $('linkConfirmModal')) return;
   if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); introAdvance(); }
   else if (e.key === 'ArrowLeft') { e.preventDefault(); introBack(); }
   else if (e.key === 'Escape') { e.preventDefault(); closeIntro({ goHome: true }); }
@@ -2608,6 +2929,7 @@ async function boot() {
     if (menu.classList.contains('open')) closeMenu();
     else openMenu();
   });
+  $('searchBtn').addEventListener('click', openSearch);
 
   // Always start by rendering home so it's behind any modals.
   await renderHome();
