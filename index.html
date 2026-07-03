@@ -267,6 +267,60 @@ button { font-family: inherit; cursor: pointer; }
 .article-reader li { font-size: 16px; line-height: 1.7; color: var(--ink); margin-bottom: 6px; }
 .article-reader img { max-width: 100%; height: auto; border-radius: var(--r-md); margin: 20px 0; }
 
+/* CMS rich text embeds videos as fixed-size iframes (e.g. width="1280"
+   height="720"); scale them to the container and keep the 16:9 frame. */
+.article-reader iframe, .algo-body iframe, .rich iframe, .switch-row .desc iframe, .modal-body iframe {
+  display: block; width: 100%; max-width: 100%;
+  aspect-ratio: 16 / 9; height: auto;
+  border: 0; border-radius: var(--r-md); margin: 20px 0; background: #000;
+}
+/* Frames can't be captured into the handoff PDF — drop them there. */
+.pdf-doc iframe { display: none; }
+
+/* ---- CMS rich-content design system ----
+   CMS bodies arrive as bare semantic HTML (tables, blockquotes, code…) and
+   rely on the rendering context for all styling. Port of the native app's
+   article template so content reads as part of the app, not default HTML. */
+.table-wrap {
+  overflow-x: auto; -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--border); border-radius: var(--r-md);
+  background: var(--surface); box-shadow: var(--shadow-xs);
+  margin: 20px 0;
+}
+:is(.article-reader, .algo-body, .rich, .switch-row .desc, .modal-body) table {
+  width: 100%; margin: 0;
+  border-collapse: separate; border-spacing: 0;
+  font-size: 14px; line-height: 1.5;
+}
+:is(.article-reader, .algo-body, .rich, .switch-row .desc, .modal-body) :is(th, td) {
+  padding: 12px 16px; text-align: center;
+  border-bottom: 1px solid var(--border-2);
+  border-left: 1px solid var(--border-2);
+}
+:is(.article-reader, .algo-body, .rich, .switch-row .desc, .modal-body) :is(th, td):first-child { border-left: 0; }
+:is(.article-reader, .algo-body, .rich, .switch-row .desc, .modal-body) thead th {
+  background: var(--brand-soft); color: var(--ink);
+  font-weight: 600; font-size: 13px;
+}
+:is(.article-reader, .algo-body, .rich, .switch-row .desc, .modal-body) tbody tr:last-child :is(th, td) { border-bottom: 0; }
+:is(.article-reader, .algo-body, .rich, .switch-row .desc, .modal-body) blockquote {
+  margin: 20px 0; padding: 14px 20px;
+  background: var(--brand-softer); border-left: 4px solid var(--brand);
+  border-radius: 0 var(--r-md) var(--r-md) 0;
+}
+:is(.article-reader, .algo-body, .rich, .switch-row .desc, .modal-body) blockquote p:last-child { margin-bottom: 0; }
+:is(.article-reader, .algo-body, .rich, .switch-row .desc, .modal-body) code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: .9em; background: var(--brand-softer);
+  border: 1px solid var(--border-2); border-radius: 4px; padding: 1px 5px;
+}
+:is(.article-reader, .algo-body, .rich, .switch-row .desc, .modal-body) pre {
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: var(--r-md); padding: 14px 16px; overflow-x: auto;
+}
+:is(.article-reader, .algo-body, .rich, .switch-row .desc, .modal-body) pre code { background: transparent; border: 0; padding: 0; }
+:is(.article-reader, .algo-body, .rich, .switch-row .desc, .modal-body) hr { border: 0; border-top: 1px solid var(--border-2); margin: 28px 0; }
+
 .segment { display: inline-flex; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); padding: 3px; margin-bottom: 24px; box-shadow: var(--shadow-xs); }
 .segment button { border: 0; background: transparent; padding: 7px 16px; border-radius: 7px; font-size: 13px; font-weight: 500; color: var(--ink-2); cursor: pointer; transition: all 140ms var(--ease); font-family: inherit; }
 .segment button.on { background: var(--ink); color: #fff; box-shadow: var(--shadow-xs); }
@@ -650,6 +704,10 @@ const state = {
   currentAlgoId: null,
   currentAlgoScores: {},
   articleFilter: 'All',
+  currentArticleId: null,
+  articleStack: [],
+  articleReturnAlgoId: null,
+  homeScrollY: 0,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -1067,20 +1125,49 @@ function wireBreadcrumbHandlers() {
 }
 
 $('backBtn').addEventListener('click', () => {
+  if (state.view === 'article') {
+    const prev = state.articleStack.pop();
+    if (prev != null) {
+      goToArticle(prev.id, { fromBack: true, scrollY: prev.scrollY });
+      return;
+    }
+    if (state.articleReturnAlgoId != null) {
+      const algoId = state.articleReturnAlgoId;
+      state.articleReturnAlgoId = null;
+      goToAlgorithm(algoId);
+      return;
+    }
+    renderHome({ restoreScroll: true });
+    return;
+  }
   if (state.view === 'algorithm' && state.trail.length >= 1) {
     const last = state.trail.pop();
     goToAlgorithm(last.algorithmId);
     return;
   }
-  renderHome();
+  renderHome({ restoreScroll: true });
 });
 
 /* ================================================================
    View rendering
    ================================================================ */
 
+/* CMS tables are bare <table> markup and can be wider than a phone screen —
+   wrap each in a .table-wrap so it scrolls horizontally inside a card frame
+   (same treatment the native app's template gives them). */
+function wrapRichTables(root) {
+  root.querySelectorAll('table').forEach((table) => {
+    if (table.closest('.table-wrap') || table.closest('.pdf-doc')) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'table-wrap';
+    table.replaceWith(wrap);
+    wrap.appendChild(table);
+  });
+}
+
 function viewFrame(content) {
   main.innerHTML = `<div class="view">${content}</div>`;
+  wrapRichTables(main);
 }
 
 function loadingFrame() {
@@ -1136,7 +1223,7 @@ function placeholderThumb(id, kind) {
 }
 
 /* ---------- HOME ---------- */
-async function renderHome() {
+async function renderHome(opts = {}) {
   state.view = 'home';
   setBreadcrumb('');
   state.currentAlgoId = null;
@@ -1230,6 +1317,11 @@ async function renderHome() {
   `);
 
   wireHomeHandlers();
+  // Only the back button restores the saved position — filter-chip
+  // re-renders and fresh navigations must not jump the page.
+  if (opts.restoreScroll) {
+    window.scrollTo({ top: state.homeScrollY, behavior: 'instant' });
+  }
 }
 
 function wireHomeHandlers() {
@@ -1252,6 +1344,7 @@ function wireHomeHandlers() {
 
 /* ---------- ALGORITHM ---------- */
 async function goToAlgorithm(id, opts = {}) {
+  if (state.view === 'home') state.homeScrollY = window.scrollY;
   state.view = 'algorithm';
   state.currentAlgoId = id;
   if (!state.currentAlgoScores[id]) state.currentAlgoScores[id] = {};
@@ -1338,6 +1431,11 @@ function renderAlgorithm(algo, opts = {}) {
       </div>
       ${att.outcomes.map((o) => {
         const vis = scored ? outcomeMatches(o, score) : true;
+        const nextId = o.next?.data?.id || '';
+        // A terminal outcome tagged Halt in the CMS means "resolve this,
+        // then re-assess" (e.g. unstable airway) — not a completed
+        // pathway, so it gets no button at all.
+        const halts = !nextId && o.TerminalBehavior === 'Halt';
         return `
         <div class="outcome ${vis ? '' : 'hidden'}" data-outcome-id="${o.id}">
           <button class="outcome-trigger">
@@ -1346,12 +1444,12 @@ function renderAlgorithm(algo, opts = {}) {
           </button>
           <div class="outcome-body-wrap"><div class="outcome-body"><div class="outcome-body-inner">
             <div class="rich">${o.Body || ''}</div>
-            <div class="actions">
-              <button class="btn btn-primary" data-continue data-next="${o.next?.data?.id || ''}">
-                ${o.next?.data?.id ? 'Continue' : 'Complete'}
+            ${halts ? '' : `<div class="actions">
+              <button class="btn btn-primary" data-continue data-next="${nextId}">
+                ${nextId ? 'Continue' : 'Complete'}
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
               </button>
-            </div>
+            </div>`}
           </div></div></div>
         </div>`;
       }).join('')}
@@ -1731,13 +1829,12 @@ function showSummary() {
 }
 
 /* ---------- ARTICLE ---------- */
-async function goToArticle(id) {
+function renderArticleView(article) {
   state.view = 'article';
+  state.currentArticleId = article.id;
   setBreadcrumb('');
   setTopbar('Article');
-  const found = state.articles.find((a) => a.id === id);
-  if (!found) { errorFrame('Article not found.'); return; }
-  const att = found.attributes;
+  const att = article.attributes;
   const tag = (att.tags?.data || [])[0]?.attributes?.Name || 'Article';
   const lastUpdated = att.updatedAt ? new Date(att.updatedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' }) : '';
 
@@ -1754,6 +1851,85 @@ async function goToArticle(id) {
   `);
   window.scrollTo({ top: 0, behavior: 'instant' });
 }
+
+// Monotonic token fencing goToArticle's async fetch: any navigation that
+// starts a newer goToArticle (or leaves the article view) invalidates
+// in-flight fetches so a slow response can't clobber the current view.
+let _articleNavSeq = 0;
+
+async function goToArticle(id, opts = {}) {
+  // Back context: article→article pushes the current article (with its
+  // scroll position, restored on back), entering from an algorithm
+  // remembers it, entering from anywhere else resets.
+  if (!opts.fromBack) {
+    if (state.view === 'article' && state.currentArticleId != null) {
+      state.articleStack.push({
+        id: state.currentArticleId,
+        scrollY: window.scrollY,
+      });
+    } else if (state.view === 'algorithm') {
+      state.articleReturnAlgoId = state.currentAlgoId;
+      state.articleStack = [];
+    } else {
+      if (state.view === 'home') state.homeScrollY = window.scrollY;
+      state.articleReturnAlgoId = null;
+      state.articleStack = [];
+    }
+  }
+  const restoreScroll = () => {
+    if (opts.scrollY != null) {
+      window.scrollTo({ top: opts.scrollY, behavior: 'instant' });
+    }
+  };
+  const seq = ++_articleNavSeq;
+  const found = state.articles.find((a) => a.id === id);
+  if (found) { renderArticleView(found); restoreScroll(); return; }
+  // Linked article that isn't in the home list — fetch it directly.
+  state.view = 'article';
+  setBreadcrumb('');
+  setTopbar('Article');
+  loadingFrame();
+  try {
+    const art = await fetchArticleFull(id);
+    if (seq !== _articleNavSeq || state.view !== 'article') return;
+    renderArticleView(art);
+    restoreScroll();
+  } catch (e) {
+    if (seq !== _articleNavSeq || state.view !== 'article') return;
+    errorFrame(`Couldn't load this article (id: ${id}): ${e.message}`);
+  }
+}
+
+/* ----- Rich-text link interception ----------------------------------
+   CMS bodies use a custom scheme for cross-article links — `article:15`
+   opens article id 15 in-app (same convention the native WebView bridge
+   handled). Plain http(s) links open in a new tab so the SPA keeps its
+   state; hash and other schemes fall through to the browser. */
+document.addEventListener('click', (e) => {
+  const a = e.target.closest && e.target.closest('a[href]');
+  if (!a) return;
+  const href = a.getAttribute('href') || '';
+  if (href.startsWith('#')) return;
+  if (href.startsWith('article:')) {
+    e.preventDefault();
+    const id = parseInt(href.slice(8), 10);
+    if (Number.isNaN(id)) return;
+    const disclaimer = document.getElementById('disclaimerModal');
+    if (disclaimer) {
+      // First-run gate (no close affordance): the disclaimer must be
+      // accepted before browsing anywhere — swallow the click.
+      if (!document.getElementById('disclaimerCloseFootBtn')) return;
+      closeDisclaimerModal();
+    }
+    if (_introState) closeIntro();
+    goToArticle(id);
+    return;
+  }
+  if (/^https?:/i.test(href)) {
+    e.preventDefault();
+    window.open(href, '_blank', 'noopener,noreferrer');
+  }
+});
 
 /* ---------- Scroll helper ---------- */
 function smoothScrollTo(targetY, duration) {
@@ -1924,6 +2100,7 @@ function renderDisclaimerModal(bodyHtml, opts = {}) {
       </div>
     </div>
   `;
+  wrapRichTables(wrap);
   document.body.appendChild(wrap);
 
   if (!review) {
@@ -2152,6 +2329,7 @@ function renderIntroSlideContent(i) {
       </div>
     </div>
   `;
+  wrapRichTables(slide);
 }
 
 async function loadIntroSlide(i) {

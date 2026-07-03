@@ -23,7 +23,7 @@
  *        data; the SW must not double-cache it.
  */
 
-const APP_SHELL_CACHE = 'stroke-mgmt-app-shell-v1';
+const APP_SHELL_CACHE = 'stroke-mgmt-app-shell-v3';
 const CMS_IMAGES_CACHE = 'stroke-mgmt-cms-images-v1';
 const CMS_IMAGES_ORIGIN = 'https://stroke-mgmt-cms.a2hosted.com';
 const CMS_IMAGES_PATH_PREFIX = '/uploads/';
@@ -40,18 +40,17 @@ const PRECACHE_URLS = [
 self.addEventListener('install', (event) => {
   event.waitUntil(
     (async () => {
-      try {
-        const cache = await caches.open(APP_SHELL_CACHE);
-        const urls = PRECACHE_URLS.map((u) => new URL(u, self.registration.scope).toString());
-        // addAll is atomic; if any single asset fails the whole install fails.
-        await cache.addAll(urls);
-      } catch (err) {
-        // Don't block install on a partial precache. The fetch handler still
-        // works against the network; subsequent visits warm the cache
-        // opportunistically.
-        // eslint-disable-next-line no-console
-        console.warn('[stroke-mgmt SW] precache failed:', err);
-      }
+      const cache = await caches.open(APP_SHELL_CACHE);
+      // `cache: 'reload'` bypasses the browser HTTP cache so a version bump
+      // can never pin a stale pre-deploy shell into the new cache.
+      const requests = PRECACHE_URLS.map(
+        (u) => new Request(new URL(u, self.registration.scope).toString(), { cache: 'reload' })
+      );
+      // Atomic on purpose: if any asset fails, the whole install fails and
+      // the previous worker + shell cache stay in service. Swallowing the
+      // error here would let activate delete the old cache and strand
+      // offline clients with no shell at all.
+      await cache.addAll(requests);
       await self.skipWaiting();
     })()
   );
