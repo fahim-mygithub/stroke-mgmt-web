@@ -1060,7 +1060,11 @@ async function _fetchPlaceholderImagesNet() {
   return imgs.map((i) => {
     const a = i.attributes || {};
     const f = a.formats || {};
-    const pick = f.small || f.medium || f.thumbnail || a;
+    // Prefer large (~1000px): card slots hit ~800-1000+ physical px on
+    // retina/phone. Strapi only generates a format when the upload exceeds
+    // its size, so no `large` means the original is <=1000px — sharper than
+    // medium/small and byte-bounded.
+    const pick = f.large || a;
     const url = pick.url || '';
     return url.startsWith('http') ? url : `${CMS}${url}`;
   }).filter(Boolean);
@@ -1233,12 +1237,15 @@ function errorFrame(msg) {
 
 /* ---------- THUMBNAIL HELPERS ---------- */
 // Resolves the Strapi Thumbnail URL for a record's `attributes` object,
-// preferring the medium format, then small, then original. Returns null
-// when the record has no Thumbnail uploaded.
+// preferring the large format (~1000px — card slots hit ~800-1000+ physical
+// px on retina/phone), otherwise the original: Strapi only generates a format
+// when the upload exceeds its size, so a missing `large` means the original
+// is <=1000px and sharper than medium/small. Returns null when the record has
+// no Thumbnail uploaded.
 function thumbUrl(att) {
   const img = att && att.Thumbnail && att.Thumbnail.data && att.Thumbnail.data.attributes;
   if (!img) return null;
-  const fmt = (img.formats && (img.formats.medium || img.formats.small)) || img;
+  const fmt = (img.formats && img.formats.large) || img;
   const url = fmt.url;
   if (!url) return null;
   return url.startsWith('http') ? url : `${CMS}${url}`;
