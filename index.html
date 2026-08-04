@@ -62,6 +62,11 @@ button { font-family: inherit; cursor: pointer; }
   .topbar-inner { padding: 12px 14px; gap: 10px; }
   .brand-logo { width: 26px; height: 26px; }
   .topbar-inner:has(#topbarTitle:not(:empty)) .brand { font-size: 0; gap: 0; }
+  /* .spacer and .topbar-title were both flex:1, so they split the free space
+     evenly and the title only ever got half a phone's worth. With the home
+     button now taking a slot too, give the title all of it — the spacer is
+     only needed to push the icon group right when there is no title. */
+  .topbar-inner:has(#topbarTitle:not(:empty)) .spacer { flex: 0 0 0; }
   .topbar-title { font-size: 15px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .back-btn { padding: 6px 10px 6px 6px; font-size: 12px; }
   .icon-btn { width: 34px; height: 34px; }
@@ -286,6 +291,14 @@ button { font-family: inherit; cursor: pointer; }
   border: 1px solid var(--border); border-radius: var(--r-md);
   background: var(--surface); box-shadow: var(--shadow-xs);
   margin: 20px 0;
+}
+/* CMS images carry no width/height, so an unstyled <img> lays out at its
+   intrinsic pixel width — the flowcharts are 1016-1060px wide and overflowed
+   every algorithm step and outcome card on a phone. `.article-reader img`
+   above already had this cap, which is why only the reader looked right. */
+:is(.algo-body, .rich, .switch-row .desc, .modal-body) img {
+  max-width: 100%; height: auto;
+  border-radius: var(--r-md); margin: 12px 0;
 }
 :is(.article-reader, .algo-body, .rich, .switch-row .desc, .modal-body) table {
   width: 100%; margin: 0;
@@ -683,7 +696,7 @@ button { font-family: inherit; cursor: pointer; }
   html, body { background: #fff !important; color: var(--ink) !important; }
   .topbar, #breadcrumbSlot, #topbarMenu, #toast,
   .intro-backdrop, .modal-backdrop, .search-backdrop,
-  .summary-hero .actions, #backBtn { display: none !important; }
+  .summary-hero .actions, #backBtn, #homeBtn { display: none !important; }
   .view { animation: none !important; }
   main.shell { max-width: none !important; padding: 0 !important; margin: 0 !important; }
   .summary-hero, .summary-card { display: none !important; }
@@ -715,6 +728,11 @@ button { font-family: inherit; cursor: pointer; }
     <button class="back-btn" id="backBtn" style="display:none;">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       Back
+    </button>
+    <!-- Each algorithm step is its own view here, so Back walks the pathway one
+         decision at a time. This is the one-tap way out of a deep trail. -->
+    <button class="icon-btn" id="homeBtn" style="display:none;" aria-label="Go to home screen" title="Home">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M3 10.5 12 3l9 7.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M5.5 9.5V20h13V9.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 20v-5.5h4V20" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
     <div class="brand">
       <img class="brand-logo" src="logo.png" alt="" decoding="async">
@@ -1134,7 +1152,9 @@ function allSwitchesSet(algo) {
 /* ----- Topbar chrome ----- */
 function setTopbar(title) {
   $('topbarTitle').textContent = title || '';
-  $('backBtn').style.display = state.view === 'home' ? 'none' : 'inline-flex';
+  const atHome = state.view === 'home';
+  $('backBtn').style.display = atHome ? 'none' : 'inline-flex';
+  $('homeBtn').style.display = atHome ? 'none' : 'grid';
 }
 function setBreadcrumb(html) {
   const slot = document.getElementById('breadcrumbSlot');
@@ -1180,6 +1200,28 @@ function wireBreadcrumbHandlers() {
     });
   });
 }
+
+/* One tap back to the start, from anywhere. Each algorithm step is its own view
+   here, so Back only ever unwinds the pathway one decision at a time and a
+   reader several cross-linked articles deep has an equally long walk.
+   Discards the in-progress treatment record, exactly as "Start over" does: the
+   step chain is gone either way, and a kept trail would prefix abandoned
+   decisions onto whatever pathway is started next. */
+function goHome() {
+  // Invalidate any algorithm/article load still in flight, so it cannot resume
+  // and paint over Home after this returns.
+  _algoNavSeq += 1;
+  _articleNavSeq += 1;
+  state.trail = [];
+  state.currentAlgoScores = {};
+  state.currentAlgoId = null;
+  state.articleStack = [];
+  state.articleReturnAlgoId = null;
+  renderHome();
+  window.scrollTo({ top: 0, behavior: 'instant' });
+}
+
+$('homeBtn').addEventListener('click', () => goHome());
 
 $('backBtn').addEventListener('click', () => {
   if (state.view === 'article') {
@@ -1403,14 +1445,29 @@ function wireHomeHandlers() {
 }
 
 /* ---------- ALGORITHM ---------- */
+/* Same monotonic-token fence goToArticle uses. A step that isn't cached yet
+   spends a visible interval awaiting the CMS, and Home (button or menu) is
+   reachable throughout — it resets currentAlgoScores and renders Home, so a
+   resumed load would both throw on the deleted score bucket and paint the
+   algorithm back over Home with no way out. */
+let _algoNavSeq = 0;
+
 async function goToAlgorithm(id, opts = {}) {
   if (state.view === 'home') state.homeScrollY = window.scrollY;
+  const seq = ++_algoNavSeq;
   state.view = 'algorithm';
   state.currentAlgoId = id;
   if (!state.currentAlgoScores[id]) state.currentAlgoScores[id] = {};
   loadingFrame();
   let algo;
-  try { algo = await loadAlgorithm(id); } catch (e) { errorFrame(e.message); return; }
+  try { algo = await loadAlgorithm(id); } catch (e) {
+    if (seq !== _algoNavSeq || state.view !== 'algorithm') return;
+    errorFrame(e.message); return;
+  }
+  if (seq !== _algoNavSeq || state.view !== 'algorithm') return;
+  // Navigated away and back while this was in flight, or the scores were
+  // cleared by a reset — re-seed rather than index into undefined.
+  if (!state.currentAlgoScores[id]) state.currentAlgoScores[id] = {};
 
   if (opts.restoreFrom?.switchValues) {
     // Rehydrate the exact switch values from the saved trail entry.
@@ -1880,11 +1937,7 @@ function showSummary() {
   `);
 
   $('printBtn').addEventListener('click', () => exportHandoffPdf());
-  $('startOverBtn').addEventListener('click', () => {
-    state.trail = [];
-    state.currentAlgoScores = {};
-    renderHome();
-  });
+  $('startOverBtn').addEventListener('click', () => goHome());
   window.scrollTo({ top: 0, behavior: 'instant' });
 }
 
@@ -2087,6 +2140,7 @@ function scrollExpandedIntoView(card) {
    ================================================================ */
 
 const MENU_ITEMS = [
+  { label: 'Home',        onClick: () => goHome() },
   { label: 'Intro',       onClick: () => goToIntro({ force: true }) },
   { label: 'Disclaimer',  onClick: () => goToDisclaimer({ review: true }) },
   { label: 'License',     onClick: () => goToLicense() },
