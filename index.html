@@ -135,7 +135,6 @@ button { font-family: inherit; cursor: pointer; }
 .algo-header { margin-bottom: 24px; padding-bottom: 20px; border-bottom: 1px solid var(--border-2); }
 .algo-header .eyebrow { color: var(--brand); }
 .algo-title { font-size: 28px; font-weight: 700; letter-spacing: -0.025em; color: var(--ink); margin: 0 0 8px 0; line-height: 1.2; }
-.algo-sub { color: var(--ink-2); font-size: 15px; margin: 0; max-width: 68ch; }
 @media (max-width: 560px) { .algo-title { font-size: 22px; } }
 
 .algo-body { font-size: 14.5px; color: var(--ink); line-height: 1.65; margin-bottom: 28px; }
@@ -207,6 +206,7 @@ button { font-family: inherit; cursor: pointer; }
 .outcomes .outcomes-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
 .outcomes .outcomes-head h3 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
 .outcomes .count { font-size: 12px; color: var(--ink-3); }
+.outcomes > .actions { display: flex; justify-content: flex-end; }
 
 .outcome {
   position: relative;
@@ -1540,7 +1540,19 @@ function renderAlgorithm(algo, opts = {}) {
     ? att.outcomes.filter((o) => outcomeMatches(o, score)).length
     : att.outcomes.length;
 
-  const outcomesHTML = `
+  // A step with no outcomes attached is terminal: the pathway ends here, so
+  // instead of an empty "Select the outcome that fits" list, offer the same
+  // Complete affordance a terminal outcome gets.
+  const outcomesHTML = att.outcomes.length === 0 ? `
+    <div class="outcomes">
+      <div class="actions">
+        <button class="btn btn-primary" data-complete-pathway>
+          Complete
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+    </div>
+  ` : `
     <div class="outcomes">
       <div class="outcomes-head">
         <h3>${scored ? 'Recommended outcome' : 'Select the outcome that fits'}</h3>
@@ -1578,7 +1590,6 @@ function renderAlgorithm(algo, opts = {}) {
       <div class="algo-header">
         <div class="eyebrow">${scored ? 'Scored pathway' : 'Text pathway'}</div>
         <h1 class="algo-title">${esc(title)}</h1>
-        <p class="algo-sub">${esc(decodeEntities(att.Summary || ''))}</p>
       </div>
 
       <div class="algo-body">${att.Body || ''}</div>
@@ -1685,6 +1696,31 @@ function wireAlgorithmHandlers(algo, opts = {}) {
     });
   });
 
+  // Zero-outcome terminal step: "Complete" records the step (there is no
+  // outcome to choose) and goes straight to the summary.
+  const completeBtn = document.querySelector('[data-complete-pathway]');
+  if (completeBtn) {
+    completeBtn.addEventListener('click', () => {
+      const att = algo.attributes;
+      const newEntry = {
+        algorithmId: algo.id,
+        algorithmTitle: decodeEntities(att.Title),
+        outcomeId: null,
+        outcomeTitle: null,
+        score: isScored(algo) ? calcScore(algo) : null,
+        switchValues: { ...(state.currentAlgoScores[algo.id] || {}) },
+      };
+      const existingIdx = state.trail.findIndex((t) => t.algorithmId === algo.id);
+      if (existingIdx >= 0) {
+        state.trail[existingIdx] = newEntry;
+        state.trail = state.trail.slice(0, existingIdx + 1);
+      } else {
+        state.trail.push(newEntry);
+      }
+      showSummary();
+    });
+  }
+
   // Auto-expand the outcome that was previously chosen, if we're restoring.
   if (opts.restoreOutcomeId) {
     const card = document.querySelector(
@@ -1751,7 +1787,7 @@ function renderPdfDoc() {
       </div>
       <div class="final-rec">
         <div class="lbl">Final recommendation</div>
-        <div class="rec">${esc(last.outcomeTitle)} <span style="color:var(--ink-3);font-weight:500;">(from ${esc(last.algorithmTitle)})</span></div>
+        <div class="rec">${esc(last.outcomeTitle ?? '—')} <span style="color:var(--ink-3);font-weight:500;">(from ${esc(last.algorithmTitle)})</span></div>
       </div>
     </div>
   `;
@@ -1776,14 +1812,13 @@ function renderPdfStep(trailEntry, i) {
           <span class="step-num">Step ${i + 1}</span>
           <h2>${esc(trailEntry.algorithmTitle)}</h2>
         </div>
-        <p class="step-sub">${esc(trailEntry.outcomeTitle)}</p>
+        ${trailEntry.outcomeTitle ? `<p class="step-sub">${esc(trailEntry.outcomeTitle)}</p>` : ''}
       </div>
     `;
   }
 
   const att = algo.attributes;
   const title = decodeEntities(att.Title);
-  const summary = decodeEntities(att.Summary || '');
   const scored = isScored(algo);
   const score = trailEntry.score;
 
@@ -1825,13 +1860,15 @@ function renderPdfStep(trailEntry, i) {
     </div>
   ` : '';
 
-  const outcomeBlock = `
+  // A zero-outcome terminal step has no decision to show — the step's body
+  // above already carries the final recommendation.
+  const outcomeBlock = (outcome || trailEntry.outcomeTitle) ? `
     <div class="pdf-outcome">
       <div class="lbl">Decision</div>
       <h3>${esc(decodeEntities(outcome?.Title || trailEntry.outcomeTitle))}</h3>
       <div class="body">${outcome?.Body || ''}</div>
     </div>
-  `;
+  ` : '';
 
   const citations = (att.citations || []);
   const citationsBlock = citations.length ? `
@@ -1847,7 +1884,6 @@ function renderPdfStep(trailEntry, i) {
         <span class="step-num">Step ${i + 1}</span>
         <h2>${esc(title)}</h2>
       </div>
-      ${summary ? `<p class="step-sub">${esc(summary)}</p>` : ''}
       <div class="algo-body">${att.Body || ''}</div>
       ${qaBlock}
       ${outcomeBlock}
@@ -1915,7 +1951,7 @@ function showSummary() {
       <div class="num">${i + 1}</div>
       <div>
         <div class="name">${esc(s.algorithmTitle)}${s.score != null ? ` <span style="color:var(--ink-3);font-weight:500;">· score ${s.score}</span>` : ''}</div>
-        <div class="choice">${esc(s.outcomeTitle)}</div>
+        <div class="choice">${esc(s.outcomeTitle ?? '—')}</div>
       </div>
     </div>
   `).join('');
