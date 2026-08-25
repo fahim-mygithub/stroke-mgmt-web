@@ -23,7 +23,7 @@
  *        data; the SW must not double-cache it.
  */
 
-const APP_SHELL_CACHE = 'stroke-mgmt-app-shell-v8';
+const APP_SHELL_CACHE = 'stroke-mgmt-app-shell-v9';
 const CMS_IMAGES_CACHE = 'stroke-mgmt-cms-images-v1';
 const CMS_IMAGES_ORIGIN = 'https://stroke-mgmt-cms.a2hosted.com';
 const CMS_IMAGES_PATH_PREFIX = '/uploads/';
@@ -31,6 +31,7 @@ const CMS_IMAGES_PATH_PREFIX = '/uploads/';
 const PRECACHE_URLS = [
   './',
   './index.html',
+  './privacy-policy.html',
   './logo.png',
   './manifest.webmanifest',
   './icons/icon-192.png',
@@ -82,6 +83,25 @@ function isAppShellRequest(url) {
   return url.pathname.startsWith(scopePath);
 }
 
+/**
+ * True only for navigations that are *meant* to render the app shell: the bare
+ * scope URL or an explicit `index.html`. Standalone pages under scope (notably
+ * `privacy-policy.html`, which the Play Store links to publicly) must never be
+ * answered with the shell — serving the app in place of the policy is exactly
+ * the "link does not lead to a relevant webpage" failure Google rejects for.
+ */
+function isShellNavigation(request) {
+  if (request.mode !== 'navigate') return false;
+  let pathname;
+  try {
+    pathname = new URL(request.url).pathname;
+  } catch {
+    return false;
+  }
+  const scopePath = new URL(self.registration.scope).pathname;
+  return pathname === scopePath || pathname === `${scopePath}index.html`;
+}
+
 async function staleWhileRevalidate(request) {
   const cache = await caches.open(CMS_IMAGES_CACHE);
   const cached = await cache.match(request);
@@ -116,7 +136,7 @@ async function cacheFirst(request) {
   // same path. The precache lists `index.html` (relative), not the bare scope
   // URL, so navigations to e.g. `…/stroke-mgmt-web/` need this fallback to hit
   // the precached shell.
-  if (!cached && request.mode === 'navigate') {
+  if (!cached && isShellNavigation(request)) {
     const indexUrl = new URL('index.html', self.registration.scope).toString();
     cached = await cache.match(indexUrl);
   }
@@ -128,8 +148,8 @@ async function cacheFirst(request) {
     }
     return response;
   } catch (err) {
-    // Network failed. Last-ditch fallback for navigations: serve the cached shell.
-    if (request.mode === 'navigate') {
+    // Network failed. Last-ditch fallback for shell navigations only.
+    if (isShellNavigation(request)) {
       const indexUrl = new URL('index.html', self.registration.scope).toString();
       const fallback = await cache.match(indexUrl);
       if (fallback) return fallback;
