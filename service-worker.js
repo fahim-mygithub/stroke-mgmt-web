@@ -23,7 +23,7 @@
  *        data; the SW must not double-cache it.
  */
 
-const APP_SHELL_CACHE = 'stroke-mgmt-app-shell-v9';
+const APP_SHELL_CACHE = 'stroke-mgmt-app-shell-v10';
 const CMS_IMAGES_CACHE = 'stroke-mgmt-cms-images-v1';
 const CMS_IMAGES_ORIGIN = 'https://stroke-mgmt-cms.a2hosted.com';
 const CMS_IMAGES_PATH_PREFIX = '/uploads/';

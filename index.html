@@ -761,6 +761,8 @@ button { font-family: inherit; cursor: pointer; }
    CMS client — pulls from the same Strapi instance as the RN app
    ================================================================ */
 const CMS = 'https://stroke-mgmt-cms.a2hosted.com';
+const PRIVACY_POLICY_URL =
+  'https://fahim-mygithub.github.io/stroke-mgmt-web/privacy-policy.html';
 const ALGO_POPULATE =
   'populate[0]=outcomes&populate[1]=switches&populate[2]=outcomes.criterion&populate[3]=outcomes.next&populate[4]=switches.levels&populate[5]=citations&populate[6]=Thumbnail';
 const ARTICLE_POPULATE = 'populate[0]=tags&populate[1]=Thumbnail';
@@ -961,6 +963,18 @@ async function fetchJson(url) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Fetch failed: ${res.status} ${url}`);
   return res.json();
+}
+
+// About and Disclaimer are ARTICLES tagged with a `Designation` — not the
+// `about-us` / `disclaimer` single types this file originally reached for.
+// Those paths 404 on the live CMS, and because both call sites swallow fetch
+// errors into a fallback, the two views had been silently serving their
+// hardcoded placeholder text instead of the real content. Native reads them
+// this way too (StrapiArticleRepository.getByDesignation).
+async function fetchDesignatedArticleBody(designation) {
+  const params = new URLSearchParams({ 'filters[Designation]': designation });
+  const json = await fetchJson(`${CMS}/api/articles/?${params}`);
+  return json?.data?.[0]?.attributes?.Body || null;
 }
 
 // Stale-while-revalidate wrappers. Each returns whatever's in IDB
@@ -2180,6 +2194,10 @@ const MENU_ITEMS = [
   { label: 'Intro',       onClick: () => goToIntro({ force: true }) },
   { label: 'Disclaimer',  onClick: () => goToDisclaimer({ review: true }) },
   { label: 'License',     onClick: () => goToLicense() },
+  // Store policy requires a privacy policy link reachable from inside the app
+  // itself, not just from the store listing. Kept as a static entry rather
+  // than CMS body text so it survives an offline or unreachable CMS.
+  { label: 'Privacy Policy', onClick: () => openExternalLinkConfirm(PRIVACY_POLICY_URL) },
   { label: 'Refresh',     onClick: () => doRefresh() },
   { label: 'Clear Cache', onClick: () => doClearCache() },
   { label: 'About',       onClick: () => goToAbout() },
@@ -2255,8 +2273,7 @@ async function fetchDisclaimerBody() {
     // Background refresh so the next open sees the latest copy.
     (async () => {
       try {
-        const json = await fetchJson(`${CMS}/api/disclaimer?populate=*`);
-        const body = json?.data?.attributes?.Body;
+        const body = await fetchDesignatedArticleBody('Disclaimer');
         if (body && body !== cached) {
           _disclaimerCache = body;
           await idbPut('disclaimer', 'singleton', body);
@@ -2267,8 +2284,7 @@ async function fetchDisclaimerBody() {
   }
   // Cold cache.
   try {
-    const json = await fetchJson(`${CMS}/api/disclaimer?populate=*`);
-    const body = json?.data?.attributes?.Body;
+    const body = await fetchDesignatedArticleBody('Disclaimer');
     _disclaimerCache = body || DISCLAIMER_FALLBACK;
     if (body) await idbPut('disclaimer', 'singleton', body);
   } catch {
@@ -2927,7 +2943,10 @@ function goToLicense() {
    About
    ================================================================ */
 
+// The CMS body carries its own <h1>, so the About view no longer prints one —
+// this fallback has to supply its own heading for the CMS-unreachable path.
 const ABOUT_FALLBACK = `
+  <h1>About Us</h1>
   <p>Ischemic Stroke is a clinical decision-support tool developed by
   Yahia M. Lodi Physician PC.</p>
 `;
@@ -2948,8 +2967,7 @@ async function goToAbout() {
       // Background revalidate.
       (async () => {
         try {
-          const json = await fetchJson(`${CMS}/api/about-us?populate=*`);
-          const fresh = json?.data?.attributes?.Body;
+          const fresh = await fetchDesignatedArticleBody('About');
           if (fresh && fresh !== cached) {
             _aboutCache = fresh;
             await idbPut('about_us', 'singleton', fresh);
@@ -2959,9 +2977,9 @@ async function goToAbout() {
       })();
     } else {
       try {
-        const json = await fetchJson(`${CMS}/api/about-us?populate=*`);
-        body = json?.data?.attributes?.Body || ABOUT_FALLBACK;
-        if (json?.data?.attributes?.Body) await idbPut('about_us', 'singleton', body);
+        const fresh = await fetchDesignatedArticleBody('About');
+        body = fresh || ABOUT_FALLBACK;
+        if (fresh) await idbPut('about_us', 'singleton', body);
       } catch {
         body = ABOUT_FALLBACK;
       }
@@ -2972,7 +2990,6 @@ async function goToAbout() {
   viewFrame(`
     <div class="article-reader">
       <span class="tag">ABOUT</span>
-      <h1>About this app</h1>
       <div>${body}</div>
     </div>
   `);
